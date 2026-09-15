@@ -1,0 +1,6 @@
+{
+  "name": "SheBlooms",
+  "description": "A curated community for women in their 30s, 40s, 50s and beyond to learn, connect, and flourish. Operated by Bloom and Beyond Ltd in Abuja, Nigeria.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
