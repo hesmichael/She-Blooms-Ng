@@ -15,7 +15,7 @@ export const getSessionUser = query({
       return null;
     }
 
-    const user = await ctx.db.get(session.userId as any);
+    const user = (await ctx.db.get(session.userId as any)) as any;
     if (!user) return null;
 
     return {

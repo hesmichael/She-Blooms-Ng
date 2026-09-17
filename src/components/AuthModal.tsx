@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import QRCode from 'qrcode';
-import { ShieldCheck, Lock, Mail, Key, Copy, Check, AlertCircle, X, ShieldAlert, RefreshCw, QrCode, Smartphone, Send } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShieldCheck, Lock, Mail, Key, Check, AlertCircle, X, ShieldAlert, RefreshCw, Send } from 'lucide-react';
 import { UserProfile } from '../types';
 
 interface AuthModalProps {
@@ -19,7 +18,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onNavigateToPrivacy,
 }) => {
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
-  const [step, setStep] = useState<'credentials' | '2fa_verify' | '2fa_setup'>('credentials');
+  const [step, setStep] = useState<'credentials' | '2fa_verify'>('credentials');
 
   // Form states
   const [name, setName] = useState('');
@@ -29,39 +28,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [backupCode, setBackupCode] = useState('');
   const [useBackupCode, setUseBackupCode] = useState(false);
 
-  // 2FA Setup data from server
-  const [setupUserId, setSetupUserId] = useState('');
-  const [setupSecret, setSetupSecret] = useState('');
-  const [setupBackupCodes, setSetupBackupCodes] = useState<string[]>([]);
-  const [tempToken, setTempToken] = useState('');
-  const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
-
   // Status & Feedback
+  const [tempToken, setTempToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copiedSecret, setCopiedSecret] = useState(false);
   const [sendingEmailCode, setSendingEmailCode] = useState(false);
   const [emailCodeSuccess, setEmailCodeSuccess] = useState<string | null>(null);
-
-  const isAuthorizedAdminEmail = ['vinegoro@gmail.com', 'mojaizs@gmail.com'].includes(email.trim().toLowerCase());
-
-  // Generate QR Code whenever setupSecret is available
-  useEffect(() => {
-    if (step === '2fa_setup' && setupSecret) {
-      const cleanEmail = email.trim() || 'member@sheblooms.ng';
-      const totpUri = `otpauth://totp/SheBlooms:${encodeURIComponent(cleanEmail)}?secret=${setupSecret}&issuer=SheBlooms&algorithm=SHA1&digits=6&period=30`;
-      QRCode.toDataURL(totpUri, {
-        width: 180,
-        margin: 1,
-        color: {
-          dark: '#332A28',
-          light: '#FFFFFF'
-        }
-      })
-        .then((url) => setQrCodeUrl(url))
-        .catch(() => setQrCodeUrl(''));
-    }
-  }, [step, setupSecret, email]);
 
   if (!isOpen) return null;
 
@@ -91,11 +63,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Registration failed.');
 
-        setSetupUserId(data.userId);
-        setSetupSecret(data.secret);
-        setSetupBackupCodes(data.backupCodes || []);
-        setTwoFactorCode('');
-        setStep('2fa_setup');
+        if (data.token && data.user) {
+          localStorage.setItem('sheblooms_token', data.token);
+          onSuccess(data.user, data.token);
+          resetForm();
+          onClose();
+          return;
+        } else {
+          setError('Account registered successfully. Please sign in.');
+          setMode('login');
+        }
       } else {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
@@ -109,35 +86,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           setTempToken(data.tempToken);
           setTwoFactorCode('');
           setStep('2fa_verify');
+        } else if (data.token && data.user) {
+          localStorage.setItem('sheblooms_token', data.token);
+          onSuccess(data.user, data.token);
+          resetForm();
+          onClose();
         }
       }
     } catch (err: any) {
       setError(err.message || 'An error occurred. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerify2FASetup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-
-    try {
-      const res = await fetch('/api/auth/verify-2fa-setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: setupUserId, code: twoFactorCode.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Invalid 2FA code.');
-
-      localStorage.setItem('sheblooms_token', data.token);
-      onSuccess(data.user, data.token);
-      onClose();
-      resetForm();
-    } catch (err: any) {
-      setError(err.message || 'Could not verify two-factor code.');
     } finally {
       setLoading(false);
     }
@@ -170,12 +127,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } finally {
       setLoading(false);
     }
-  };
-
-  const copySecretToClipboard = () => {
-    navigator.clipboard.writeText(setupSecret);
-    setCopiedSecret(true);
-    setTimeout(() => setCopiedSecret(false), 2500);
   };
 
   const handleSendEmailCode = async () => {
@@ -221,11 +172,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div>
               <h3 id="auth-modal-title" className="font-editorial text-xl font-bold text-[#332A28]">
                 {step === 'credentials'
-                  ? mode === 'login' ? 'Account Sign In' : 'Create Account'
-                  : 'Two-Factor Authentication'}
+                  ? mode === 'login' ? 'Admin Portal Sign In' : 'Admin Account Setup'
+                  : 'Two-Factor Security Verification'}
               </h3>
               <p className="text-[11px] text-[#7F876B] font-medium">
-                Protected with 2FA and AES-256 Storage
+                Admin Exclusive • 2FA & Cryptographic Protection
               </p>
             </div>
           </div>
@@ -255,7 +206,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   : 'text-[#332A28]/50 hover:text-[#332A28]'
               }`}
             >
-              Sign In
+              Admin Sign In
             </button>
             <button
               onClick={() => {
@@ -268,7 +219,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   : 'text-[#332A28]/50 hover:text-[#332A28]'
               }`}
             >
-              Register (2FA Required)
+              Admin Setup
             </button>
           </div>
         )}
@@ -278,6 +229,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div className="p-3 bg-[#F6D5C5] border border-[#C97C79] rounded-sm text-xs text-[#332A28] flex items-start space-x-2">
             <AlertCircle className="w-4 h-4 text-[#C97C79] shrink-0 mt-0.5" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {/* Notice of Admin Restriction */}
+        {step === 'credentials' && (
+          <div className="p-2.5 bg-[#FFF5DE] border border-[#C89A61]/40 rounded-sm text-[11px] text-[#332A28] flex items-start space-x-2">
+            <ShieldCheck className="w-4 h-4 text-[#7F876B] shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold">Restricted Access:</span> Authorized administrative credentials required.
+            </div>
           </div>
         )}
 
@@ -338,7 +299,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
               {mode === 'register' && (
                 <p className="text-[11px] text-[#332A28]/60 mt-1">
-                  After setting your password, two-factor authentication will be set up immediately.
+                  Your account will be registered and encrypted securely.
                 </p>
               )}
             </div>
@@ -355,102 +316,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <span>Processing...</span>
                 </>
               ) : (
-                <span>{mode === 'login' ? 'Continue to 2FA' : 'Continue to 2FA Setup'}</span>
+                <span>{mode === 'login' ? 'Continue to Sign In' : 'Create Account'}</span>
               )}
             </button>
-
-            {isAuthorizedAdminEmail && (
-              <div className="p-2.5 bg-[#FFF5DE] border border-[#C89A61]/40 rounded-sm text-xs text-[#332A28] flex items-center space-x-2">
-                <ShieldCheck className="w-4 h-4 text-[#7F876B] shrink-0" />
-                <span className="font-medium">Designated SheBlooms Staff Administrator</span>
-              </div>
-            )}
           </form>
         )}
 
-        {/* STEP 2: 2FA SETUP (For New Registrations) */}
-        {step === '2fa_setup' && (
-          <form onSubmit={handleVerify2FASetup} className="space-y-4 text-xs">
-            <div className="p-3 bg-[#FFF5DE] border border-[#E8A6B2]/40 rounded-sm space-y-3">
-              <div className="flex items-center space-x-2">
-                <Smartphone className="w-4 h-4 text-[#C97C79]" />
-                <p className="font-semibold text-sm text-[#332A28]">
-                  Setup Two-Factor Authenticator
-                </p>
-              </div>
-
-              {/* QR Code Presentation */}
-              {qrCodeUrl ? (
-                <div className="flex flex-col items-center justify-center p-3 bg-white rounded-sm border border-[#E8A6B2]/30 space-y-2">
-                  <img
-                    src={qrCodeUrl}
-                    alt="2FA QR Code"
-                    className="w-36 h-36 border border-[#332A28]/10 rounded-sm"
-                  />
-                  <p className="text-[11px] text-center text-[#332A28]/80 font-medium">
-                    Scan with Google Authenticator, Microsoft Authenticator, or Apple Passwords
-                  </p>
-                </div>
-              ) : null}
-
-              <p className="text-[#332A28]/80 leading-relaxed text-[11px]">
-                Or enter this setup key manually into your authenticator app:
-              </p>
-
-              <div className="flex items-center justify-between bg-white px-3 py-2 border border-[#E8A6B2]/40 rounded-sm font-mono text-xs">
-                <span className="font-bold tracking-wider text-[11px]">{setupSecret}</span>
-                <button
-                  type="button"
-                  onClick={copySecretToClipboard}
-                  className="p-1 hover:text-[#C97C79] text-[#332A28]/70"
-                  title="Copy secret key"
-                >
-                  {copiedSecret ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-                </button>
-              </div>
-
-              <div className="text-[10px] text-[#332A28]/70 leading-relaxed bg-[#FFF9F2] p-2 rounded-xs border border-[#E8A6B2]/20">
-                <span className="font-semibold">RFC 6238 Standard:</span> Codes are generated locally on your device every 30 seconds. No internet connection or SMS is required to generate codes.
-              </div>
-            </div>
-
-            {/* Backup codes */}
-            <div className="space-y-1">
-              <span className="font-medium text-[#332A28]">Backup Recovery Codes (Save these safely):</span>
-              <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px] text-center bg-white p-2 border border-[#E8A6B2]/40 rounded-sm">
-                {setupBackupCodes.map((code, idx) => (
-                  <span key={idx} className="bg-[#FFF9F2] py-0.5 rounded-xs">{code}</span>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label htmlFor="setup-2fa-code" className="block font-medium text-[#332A28] mb-1">
-                Enter 6-Digit Code from Your Authenticator App
-              </label>
-              <input
-                id="setup-2fa-code"
-                type="text"
-                maxLength={6}
-                required
-                value={twoFactorCode}
-                onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ''))}
-                placeholder="000000"
-                className="w-full text-center tracking-[0.5em] font-mono text-lg py-2.5 bg-white border border-[#E8A6B2]/60 rounded-sm focus:border-[#C97C79] focus:ring-1 focus:ring-[#C97C79] outline-none"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || twoFactorCode.length !== 6}
-              className="w-full bg-[#332A28] text-[#FFF9F2] hover:bg-[#C97C79] text-xs uppercase tracking-widest font-semibold py-3 rounded-sm transition-colors duration-200 disabled:opacity-50"
-            >
-              {loading ? 'Verifying 2FA...' : 'Complete Account Registration'}
-            </button>
-          </form>
-        )}
-
-        {/* STEP 3: 2FA VERIFICATION (For Login) */}
+        {/* 2FA VERIFICATION (For Login) */}
         {step === '2fa_verify' && (
           <form onSubmit={handleVerify2FALogin} className="space-y-4 text-xs">
             <div className="text-center space-y-1">
@@ -459,7 +331,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 Two-Factor Security Verification
               </p>
               <p className="text-[#332A28]/70 text-xs">
-                Enter the 6-digit code from your authenticator app or request an email code.
+                Enter your 6-digit verification code.
               </p>
             </div>
 
@@ -475,17 +347,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="space-y-3">
                 <div>
                   <label htmlFor="login-2fa-code" className="block text-center font-medium text-[#332A28] mb-2">
-                    6-Digit Verification Code
+                    Verification Code
                   </label>
                   <input
                     id="login-2fa-code"
                     type="text"
-                    maxLength={6}
                     required
                     value={twoFactorCode}
-                    onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ''))}
-                    placeholder="000000"
-                    className="w-full text-center tracking-[0.5em] font-mono text-xl py-3 bg-white border border-[#E8A6B2]/60 rounded-sm focus:border-[#C97C79] focus:ring-1 focus:ring-[#C97C79] outline-none"
+                    onChange={(e) => setTwoFactorCode(e.target.value.toUpperCase())}
+                    placeholder="Enter 6-digit code"
+                    className="w-full text-center tracking-wider font-mono text-lg py-3 bg-white border border-[#E8A6B2]/60 rounded-sm focus:border-[#C97C79] focus:ring-1 focus:ring-[#C97C79] outline-none"
                     autoFocus
                   />
                 </div>
@@ -507,24 +378,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
             ) : (
               <div>
-                <label htmlFor="login-backup-code" className="block font-medium text-[#332A28] mb-1">
-                  Enter 10-Character Backup Code
+                <label htmlFor="login-backup-code" className="block text-center font-medium text-[#332A28] mb-1">
+                  Security Passkey
                 </label>
                 <input
                   id="login-backup-code"
-                  type="text"
+                  type="password"
                   required
                   value={backupCode}
                   onChange={(e) => setBackupCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. SB-9821-44"
+                  placeholder="••••••••••••••••"
                   className="w-full text-center font-mono py-2.5 bg-white border border-[#E8A6B2]/60 rounded-sm focus:border-[#C97C79] focus:ring-1 focus:ring-[#C97C79] outline-none"
+                  autoFocus
                 />
               </div>
             )}
 
             <button
               type="submit"
-              disabled={loading || (!useBackupCode && twoFactorCode.length !== 6)}
+              disabled={loading || (!useBackupCode ? twoFactorCode.trim().length < 4 : backupCode.trim().length < 4)}
               className="w-full bg-[#332A28] text-[#FFF9F2] hover:bg-[#C97C79] text-xs uppercase tracking-widest font-semibold py-3 rounded-sm transition-colors duration-200 disabled:opacity-50"
             >
               {loading ? 'Verifying...' : 'Verify & Sign In'}
@@ -534,9 +406,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <button
                 type="button"
                 onClick={() => setUseBackupCode(!useBackupCode)}
-                className="hover:underline hover:text-[#332A28]"
+                className="p-1.5 text-[#332A28]/40 hover:text-[#332A28] transition-colors rounded-xs hover:bg-[#FFF5DE]"
+                title={useBackupCode ? "Standard verification" : "Alternative verification"}
+                aria-label="Security key options"
               >
-                {useBackupCode ? 'Use 6-digit code instead' : 'Lost device? Use backup code'}
+                <Lock className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"

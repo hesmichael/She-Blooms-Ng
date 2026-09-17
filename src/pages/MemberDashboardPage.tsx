@@ -75,6 +75,11 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
   const [exportingConvex, setExportingConvex] = useState(false);
   const [convexExportSuccess, setConvexExportSuccess] = useState<string | null>(null);
 
+  // Deploy to Convex Cloud State
+  const [deployKeyInput, setDeployKeyInput] = useState('');
+  const [deployingConvex, setDeployingConvex] = useState(false);
+  const [deployConvexResult, setDeployConvexResult] = useState<{ success: boolean; message: string } | null>(null);
+
   const [loadingData, setLoadingData] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -82,6 +87,13 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
   // Event Action Status
   const [eventActionLoading, setEventActionLoading] = useState<string | null>(null);
   const [eventActionMsg, setEventActionMsg] = useState<string | null>(null);
+
+  // In-App Deletion Confirmation State (eliminates window.confirm iframe blocks)
+  const [itemToDelete, setItemToDelete] = useState<{
+    type: 'event' | 'rsvp' | 'join' | 'conference' | 'contact';
+    id: string;
+    title: string;
+  } | null>(null);
 
   // Admin New Event Form
   const [newEventTitle, setNewEventTitle] = useState('');
@@ -191,6 +203,33 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
     }
   };
 
+  const handleDeployToConvex = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setDeployingConvex(true);
+    setDeployConvexResult(null);
+    try {
+      const token = getSessionToken();
+      const res = await fetch('/api/admin/convex/deploy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ deployKey: deployKeyInput.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Deployment to Convex Cloud failed');
+      }
+      setDeployConvexResult({ success: true, message: data.message });
+      await fetchConvexStatus();
+    } catch (err: any) {
+      setDeployConvexResult({ success: false, message: err.message || 'Failed to deploy to Convex Cloud' });
+    } finally {
+      setDeployingConvex(false);
+    }
+  };
+
   useEffect(() => {
     if (user.role === 'admin') {
       fetchAllAdminData();
@@ -282,25 +321,38 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
     }
   };
 
-  // Delete Event
-  const handleDeleteEvent = async (eventId: string, eventTitle: string) => {
-    if (!window.confirm(`Are you sure you want to permanently delete "${eventTitle}"?`)) {
-      return;
-    }
-    setEventActionLoading(eventId);
+  // Delete Item Initiation
+  const handleDeleteEvent = (eventId: string, eventTitle: string) => {
+    setItemToDelete({ type: 'event', id: eventId, title: eventTitle });
+  };
+
+  // Perform permanent deletion
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
+    const { id, title, type } = itemToDelete;
+    setEventActionLoading(id);
     const token = getSessionToken();
 
+    let endpoint = `/api/admin/events/${id}`;
+    if (type === 'rsvp') endpoint = `/api/admin/registrations/${id}`;
+    if (type === 'join') endpoint = `/api/admin/join/${id}`;
+    if (type === 'conference') endpoint = `/api/admin/conference/${id}`;
+    if (type === 'contact') endpoint = `/api/admin/contacts/${id}`;
+
     try {
-      const res = await fetch(`/api/admin/events/${eventId}`, {
+      const res = await fetch(endpoint, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to delete event');
-      setEventActionMsg(`Event "${eventTitle}" deleted.`);
-      onRefreshEvents();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete record');
+      setEventActionMsg(`Successfully deleted "${title}".`);
+      setItemToDelete(null);
+      if (type === 'event') {
+        onRefreshEvents();
+      }
       fetchAllAdminData();
     } catch (err: any) {
       setEventActionMsg(`Error: ${err.message}`);
@@ -832,18 +884,29 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
                           </td>
                           <td className="p-2.5 text-[#332A28]/70">{reg.city || 'Abuja'}</td>
                           <td className="p-2.5">
-                            {reg.userPhone && (
-                              <a
-                                href={getWhatsAppLink(reg.userPhone, reg.userName)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center space-x-1 px-2 py-1 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#128C7E] font-semibold text-[11px] rounded-sm transition-colors"
-                                title="Message on WhatsApp"
+                            <div className="flex items-center space-x-2">
+                              {reg.userPhone && (
+                                <a
+                                  href={getWhatsAppLink(reg.userPhone, reg.userName)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center space-x-1 px-2 py-1 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#128C7E] font-semibold text-[11px] rounded-sm transition-colors"
+                                  title="Message on WhatsApp"
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                  <span>WhatsApp</span>
+                                </a>
+                              )}
+                              <button
+                                onClick={() => setItemToDelete({ type: 'rsvp', id: reg.id, title: `RSVP from ${reg.userName} (${reg.eventTitle})` })}
+                                disabled={eventActionLoading === reg.id}
+                                className="p-1 text-[#332A28]/40 hover:text-red-700 transition-colors rounded-sm cursor-pointer"
+                                title="Delete RSVP"
+                                aria-label="Delete RSVP"
                               >
-                                <MessageCircle className="w-3 h-3" />
-                                <span>WhatsApp</span>
-                              </a>
-                            )}
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1155,18 +1218,29 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
                             )}
                           </td>
                           <td className="p-2.5">
-                            {member.whatsapp && (
-                              <a
-                                href={getWhatsAppLink(member.whatsapp, member.firstName)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center space-x-1 px-2 py-1 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#128C7E] font-semibold text-[11px] rounded-sm transition-colors"
-                                title="Message on WhatsApp"
+                            <div className="flex items-center space-x-2">
+                              {member.whatsapp && (
+                                <a
+                                  href={getWhatsAppLink(member.whatsapp, member.firstName)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center space-x-1 px-2 py-1 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#128C7E] font-semibold text-[11px] rounded-sm transition-colors"
+                                  title="Message on WhatsApp"
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                  <span>WhatsApp</span>
+                                </a>
+                              )}
+                              <button
+                                onClick={() => setItemToDelete({ type: 'join', id: member.id, title: `Application from ${member.firstName} ${member.surname}` })}
+                                disabled={eventActionLoading === member.id}
+                                className="p-1 text-[#332A28]/40 hover:text-red-700 transition-colors rounded-sm cursor-pointer"
+                                title="Delete membership application"
+                                aria-label="Delete application"
                               >
-                                <MessageCircle className="w-3 h-3" />
-                                <span>WhatsApp</span>
-                              </a>
-                            )}
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1251,18 +1325,29 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
                           <td className="p-2.5 text-[#332A28]/70">{conf.city}</td>
                           <td className="p-2.5 text-[#332A28] font-semibold">{conf.numberAttending || 1}</td>
                           <td className="p-2.5">
-                            {conf.whatsapp && (
-                              <a
-                                href={getWhatsAppLink(conf.whatsapp, conf.name)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center space-x-1 px-2 py-1 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#128C7E] font-semibold text-[11px] rounded-sm transition-colors"
-                                title="Message on WhatsApp"
+                            <div className="flex items-center space-x-2">
+                              {conf.whatsapp && (
+                                <a
+                                  href={getWhatsAppLink(conf.whatsapp, conf.name)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center space-x-1 px-2 py-1 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#128C7E] font-semibold text-[11px] rounded-sm transition-colors"
+                                  title="Message on WhatsApp"
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                  <span>WhatsApp</span>
+                                </a>
+                              )}
+                              <button
+                                onClick={() => setItemToDelete({ type: 'conference', id: conf.id, title: `Conference Registration for ${conf.name} ${conf.surname}` })}
+                                disabled={eventActionLoading === conf.id}
+                                className="p-1 text-[#332A28]/40 hover:text-red-700 transition-colors rounded-sm cursor-pointer"
+                                title="Delete conference registration"
+                                aria-label="Delete conference registration"
                               >
-                                <MessageCircle className="w-3 h-3" />
-                                <span>WhatsApp</span>
-                              </a>
-                            )}
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1331,9 +1416,20 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
                             </span>
                           )}
                         </div>
-                        <span className="text-[#332A28]/60 font-mono text-[11px]">
-                          {new Date(msg.createdAt).toLocaleString()}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-[#332A28]/60 font-mono text-[11px]">
+                            {new Date(msg.createdAt).toLocaleString()}
+                          </span>
+                          <button
+                            onClick={() => setItemToDelete({ type: 'contact', id: msg.id, title: `Message from ${msg.name} (${msg.subject})` })}
+                            disabled={eventActionLoading === msg.id}
+                            className="p-1 text-[#332A28]/40 hover:text-red-700 transition-colors rounded-sm cursor-pointer"
+                            title="Delete message"
+                            aria-label="Delete message"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="text-[#332A28]/70">
@@ -1489,35 +1585,22 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
                   </div>
                 </div>
 
-                {/* Authorized Admins List */}
+                {/* Administrative Access Governance */}
                 <div className="p-4 bg-[#FFF9F2] border border-[#C89A61]/40 rounded-sm space-y-2">
                   <div className="flex items-center space-x-2 text-xs font-bold text-[#332A28]">
                     <ShieldCheck className="w-4 h-4 text-[#7F876B]" />
-                    <span>Exclusive Authorized Administrators</span>
+                    <span>Administrative Access Governance</span>
                   </div>
                   <p className="text-xs text-[#332A28]/75 leading-relaxed">
-                    Per security requirements, all mock users and credentials have been permanently removed. Only the following designated email addresses are authorized with administrator privileges:
-                  </p>
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-white border border-[#C89A61]/30 rounded-xs text-xs font-mono font-semibold text-[#332A28]">
-                      <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
-                      <span>vinegoro@gmail.com</span>
-                    </span>
-                    <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-white border border-[#C89A61]/30 rounded-xs text-xs font-mono font-semibold text-[#332A28]">
-                      <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
-                      <span>mojaizs@gmail.com</span>
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#332A28]/60 pt-1">
-                    To access the admin panel, sign up or log in with one of the authorized emails above and complete 2FA setup.
+                    Per security requirements, access to this console is restricted exclusively to authorized administrative accounts. Mock users and non-administrative profiles have been permanently removed. Unauthorized registrations and login attempts are cryptographically blocked and logged.
                   </p>
                 </div>
 
-                {/* 2FA Architecture & Rules Guide */}
+                {/* 2FA Architecture & Security Standards */}
                 <div className="p-4 bg-[#FFF9F2] border border-[#E8A6B2]/40 rounded-sm space-y-3">
                   <div className="flex items-center space-x-2 text-xs font-bold text-[#332A28]">
                     <ShieldCheck className="w-4 h-4 text-[#C97C79]" />
-                    <span>Two-Factor Authentication (2FA) Standards & Delivery Rules</span>
+                    <span>Two-Factor Authentication (2FA) Standards & Security Controls</span>
                   </div>
                   <p className="text-xs text-[#332A28]/75 leading-relaxed">
                     SheBlooms enforces cryptographic multi-factor authentication adhering to RFC 6238 and NIST SP 800-63B standards to protect member data and administrative capabilities:
@@ -1537,20 +1620,150 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
                     <div className="bg-white p-3 border border-[#E8A6B2]/30 rounded-xs space-y-1.5">
                       <div className="font-semibold text-xs text-[#332A28] flex items-center space-x-1.5">
                         <span className="w-2 h-2 rounded-full bg-[#7F876B]"></span>
-                        <span>2. How Codes Are Sent</span>
+                        <span>2. How Codes Are Delivered</span>
                       </div>
                       <p className="text-[11px] text-[#332A28]/70 leading-relaxed">
-                        <strong>Dual Mode:</strong> Scanned into Google/Microsoft Authenticator or Apple Passwords via instant QR code, OR dispatched as a 6-digit OTP directly to the admin's verified email on demand.
+                        <strong>Dual Mode:</strong> Generated in standard authenticator apps (Google Authenticator, Microsoft Authenticator, Apple Passwords) via QR code, or dispatched as a secure 6-digit OTP to the verified email.
                       </p>
                     </div>
 
                     <div className="bg-white p-3 border border-[#E8A6B2]/30 rounded-xs space-y-1.5">
                       <div className="font-semibold text-xs text-[#332A28] flex items-center space-x-1.5">
                         <span className="w-2 h-2 rounded-full bg-[#C89A61]"></span>
-                        <span>3. Protection & Recovery</span>
+                        <span>3. Emergency Security Key</span>
                       </div>
                       <p className="text-[11px] text-[#332A28]/70 leading-relaxed">
-                        Enforces max 3 failed verification attempts, ±30s clock drift tolerance, and 4 single-use encrypted backup recovery codes (<code className="font-mono text-[10px]">SB-XXXX-XX</code>) for lost devices.
+                        A high-entropy emergency recovery passkey is configured for administrative emergency recovery if authenticator devices are unavailable.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Interactive Tool: Deploy Schema & Initialize Tables on Convex Cloud */}
+                <div className="p-5 bg-white border border-[#C89A61]/40 rounded-sm space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center space-x-2">
+                      <span className="p-1 bg-[#FFF5DE] text-[#C89A61] rounded-xs border border-[#C89A61]/30">
+                        <Sparkles className="w-4 h-4" />
+                      </span>
+                      <div>
+                        <h4 className="font-bold text-sm text-[#332A28]">
+                          Initialize & Deploy Tables to Your Convex Cloud Dashboard
+                        </h4>
+                        <p className="text-[11px] text-[#332A28]/70">
+                          Why was your Convex dashboard initially blank? In Convex Cloud, database tables only appear in your account's web dashboard once the schema (<code className="font-mono">convex/schema.ts</code>) has been deployed to your project.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#FFF9F2] p-3.5 rounded-xs border border-[#E8A6B2]/30 space-y-2 text-xs">
+                    <p className="font-semibold text-[#332A28]">
+                      3 Simple Steps to Connect & See All Tables:
+                    </p>
+                    <ol className="text-[11px] text-[#332A28]/80 space-y-1 list-decimal list-inside pl-1">
+                      <li>Log into <a href="https://dashboard.convex.dev" target="_blank" rel="noreferrer" className="text-[#C97C79] font-bold underline inline-flex items-center gap-0.5">dashboard.convex.dev <ExternalLink className="w-3 h-3 inline" /></a> and open your project (or click "Create Project" named <strong>sheblooms</strong>).</li>
+                      <li>In your project, go to <strong>Project Settings</strong> → <strong>Deploy Keys</strong>, and copy your key (starts with <code className="font-mono bg-white px-1 py-0.5 rounded border border-[#E8A6B2]/40 text-[#332A28]">prod:</code>).</li>
+                      <li>Paste your Deploy Key below and click <strong>Deploy Schema to Convex Cloud</strong>. All 10 tables will immediately be initialized with real records and show in your dashboard!</li>
+                    </ol>
+                  </div>
+
+                  <form onSubmit={handleDeployToConvex} className="space-y-3 pt-1">
+                    <div>
+                      <label className="block text-xs font-semibold text-[#332A28] mb-1">
+                        Convex Deploy Key
+                      </label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="password"
+                          placeholder="prod:your-project-name|0123456789abcdef..."
+                          value={deployKeyInput}
+                          onChange={(e) => setDeployKeyInput(e.target.value)}
+                          className="flex-1 px-3 py-2 text-xs font-mono bg-[#FFF9F2] border border-[#332A28]/20 rounded-xs text-[#332A28] focus:outline-none focus:border-[#C97C79]"
+                        />
+                        <button
+                          type="submit"
+                          disabled={deployingConvex}
+                          className="px-4 py-2 bg-[#332A28] hover:bg-[#332A28]/90 text-[#FFF9F2] rounded-xs text-xs font-semibold flex items-center justify-center space-x-1.5 shrink-0 disabled:opacity-60"
+                        >
+                          {deployingConvex ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>Deploying Schema & Seeding Tables...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Database className="w-3.5 h-3.5 text-[#C89A61]" />
+                              <span>Deploy Schema to Convex Cloud</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-[#332A28]/60 mt-1">
+                        Alternatively, you can save <code className="font-mono bg-neutral-100 px-1 py-0.5 rounded">CONVEX_DEPLOY_KEY</code> in your environment settings.
+                      </p>
+                    </div>
+                  </form>
+
+                  {deployConvexResult && (
+                    <div className={`p-3 rounded-xs border text-xs flex items-start space-x-2 ${
+                      deployConvexResult.success
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                        : 'bg-rose-50 border-rose-300 text-rose-900'
+                    }`}>
+                      {deployConvexResult.success ? (
+                        <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      )}
+                      <div>
+                        <p className="font-semibold">{deployConvexResult.success ? 'Deployment Successful!' : 'Deployment Issue'}</p>
+                        <p className="text-[11px] mt-0.5">{deployConvexResult.message}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Guide: How to Verify Tables & Data in Convex Database */}
+                <div className="p-5 bg-white border border-[#E8A6B2]/40 rounded-sm space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <Database className="w-5 h-5 text-[#C97C79]" />
+                    <h4 className="font-bold text-sm text-[#332A28]">
+                      How to Inspect Your 10 Convex Database Tables
+                    </h4>
+                  </div>
+                  <p className="text-xs text-[#332A28]/80 leading-relaxed">
+                    Once the schema is deployed to your Convex project, you can view and query all tables and documents using either method:
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <div className="p-3 bg-[#FFF9F2] rounded-xs border border-[#E8A6B2]/30 space-y-2">
+                      <span className="font-bold text-[#332A28] flex items-center space-x-1.5">
+                        <span className="w-5 h-5 bg-[#332A28] text-white rounded-full flex items-center justify-center text-[10px]">1</span>
+                        <span>Convex Web Dashboard (Visual Explorer)</span>
+                      </span>
+                      <ol className="text-[11px] text-[#332A28]/75 space-y-1.5 list-decimal list-inside pl-1">
+                        <li>Visit <a href="https://dashboard.convex.dev" target="_blank" rel="noreferrer" className="text-[#C97C79] font-semibold underline">dashboard.convex.dev</a> in your web browser.</li>
+                        <li>Select your project.</li>
+                        <li>Click <strong>"Data"</strong> in the left sidebar menu.</li>
+                        <li>You will see all 10 schema tables listed: <code className="font-mono text-[10px]">events</code>, <code className="font-mono text-[10px]">registrations</code>, <code className="font-mono text-[10px]">members</code>, <code className="font-mono text-[10px]">conferenceSubmissions</code>, etc.</li>
+                        <li>Click any table to view real-time stored rows, document IDs (<code className="font-mono text-[10px]">_id</code>), creation timestamps, and fields.</li>
+                      </ol>
+                    </div>
+
+                    <div className="p-3 bg-[#FFF9F2] rounded-xs border border-[#E8A6B2]/30 space-y-2">
+                      <span className="font-bold text-[#332A28] flex items-center space-x-1.5">
+                        <span className="w-5 h-5 bg-[#332A28] text-white rounded-full flex items-center justify-center text-[10px]">2</span>
+                        <span>Direct Terminal / CLI Command</span>
+                      </span>
+                      <p className="text-[11px] text-[#332A28]/75 leading-relaxed">
+                        If running locally or in your terminal, execute the official Convex CLI command:
+                      </p>
+                      <pre className="bg-[#332A28] text-[#FFF9F2] p-2.5 rounded-xs font-mono text-[11px] select-all overflow-x-auto">
+                        npx convex dashboard
+                      </pre>
+                      <p className="text-[10px] text-[#332A28]/60">
+                        This immediately opens your browser directly to your live cloud tables and records.
                       </p>
                     </div>
                   </div>
@@ -1559,13 +1772,13 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
                 {/* Connection Information */}
                 <div className="p-4 bg-[#FFF5DE]/60 border border-[#C89A61]/30 rounded-sm space-y-2">
                   <h4 className="font-bold text-xs text-[#332A28]">
-                    Active Convex Cloud Project:
+                    Active Convex Cloud Deployment:
                   </h4>
                   <p className="text-xs text-[#332A28]/80 font-mono break-all bg-white px-3 py-1.5 border border-[#C89A61]/30 rounded-xs">
-                    https://patient-goldfinch-945.eu-west-1.convex.cloud/
+                    {convexStatus?.url || 'https://patient-goldfinch-945.eu-west-1.convex.cloud/'}
                   </p>
                   <p className="text-[11px] text-[#332A28]/70">
-                    Real-time data synchronization and live event management are operational on your Convex European cloud instance.
+                    Real-time data synchronization and live event management are configured on your Convex cloud instance.
                   </p>
                 </div>
               </div>
@@ -1715,6 +1928,53 @@ export const MemberDashboardPage: React.FC<MemberDashboardPageProps> = ({
         onComplete={handleTourComplete}
         adminName={user.name}
       />
+
+      {/* CMS In-App Delete Confirmation Modal (Works reliably in iframe without window.confirm) */}
+      {itemToDelete && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-delete-title"
+        >
+          <div className="bg-[#FFF9F2] p-6 max-w-md w-full rounded-sm border border-[#C97C79] shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center space-x-3">
+              <div className="p-2.5 bg-red-100 text-red-700 rounded-sm">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 id="confirm-delete-title" className="font-editorial text-lg font-bold text-[#332A28]">
+                  Confirm Deletion
+                </h4>
+                <p className="text-xs text-[#332A28]/70">This action permanently deletes the selected record.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#332A28]/85 leading-relaxed bg-white p-3 border border-[#E8A6B2]/30 rounded-sm">
+              Are you sure you want to permanently delete <strong className="text-[#332A28]">{itemToDelete.title}</strong>?
+            </p>
+
+            <div className="flex justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setItemToDelete(null)}
+                disabled={Boolean(eventActionLoading)}
+                className="px-4 py-2 text-xs font-semibold text-[#332A28] hover:bg-[#E8A6B2]/30 rounded-sm border border-[#332A28]/20 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={Boolean(eventActionLoading)}
+                className="px-4 py-2 text-xs font-semibold text-white bg-red-700 hover:bg-red-800 rounded-sm transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+              >
+                {eventActionLoading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
